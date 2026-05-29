@@ -2,23 +2,351 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SVG Viewer</title>
   <style>
-    body {
-      margin: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      background: #111;
+    :root {
+      --bg: #343541;
+      --sidebar-bg: #202123;
+      --card-bg: #3e3f4b;
+      --border: #4d4d4f;
+      --text: #ececf1;
+      --text-dim: #8e8ea0;
+      --text-muted: #6e6e80;
+      --accent: #19c37d;
+      --font: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
-    img {
-      max-width: 100%;
-      max-height: 100%;
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); font-family: var(--font); color: var(--text); }
+
+    #app { display: flex; width: 100%; height: 100%; }
+
+    /* ── Sidebar ────────────────────────── */
+    #sidebar {
+      width: 260px; min-width: 260px; height: 100%;
+      background: var(--sidebar-bg);
+      display: flex; flex-direction: column;
+      transition: all 0.25s ease;
+    }
+    #sidebar.collapsed { min-width: 0; width: 0; overflow: hidden; opacity: 0; }
+
+    #sidebar-header {
+      padding: 14px 16px;
+      font-size: 14px; font-weight: 600;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      letter-spacing: -0.01em;
+    }
+    #sidebar-header span { color: var(--text-dim); font-weight: 400; font-size: 12px; }
+
+    #tabs { flex: 1; overflow-y: auto; padding: 4px 0; }
+    #tabs::-webkit-scrollbar { width: 4px; }
+    #tabs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+    .tab {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; cursor: pointer; font-size: 13px;
+      color: var(--text-dim);
+      border-left: 3px solid transparent;
+      transition: all 0.12s ease;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+    .tab.active { background: rgba(255,255,255,0.08); color: #fff; border-left-color: var(--accent); }
+    .tab .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+    .tab.active .dot { background: var(--accent); }
+    .tab .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+    #sidebar-footer {
+      padding: 10px 16px; font-size: 11px; color: var(--text-muted);
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    /* ── Toggle ─────────────────────────── */
+    #toggle-btn {
+      position: fixed; left: 260px; top: 50%; transform: translateY(-50%); z-index: 20;
+      width: 20px; height: 48px;
+      border: 1px solid var(--border); border-left: none;
+      background: var(--sidebar-bg); color: var(--text-dim);
+      cursor: pointer; border-radius: 0 6px 6px 0; font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.25s ease;
+    }
+    #toggle-btn:hover { color: #fff; background: var(--card-bg); }
+    #toggle-btn.shifted { left: 0; }
+    #toggle-btn.shifted svg { transform: rotate(180deg); }
+
+    /* ── Viewer ─────────────────────────── */
+    #viewer-wrap { flex: 1; height: 100%; position: relative; overflow: hidden; }
+    #overlay { position: absolute; inset: 0; z-index: 2; cursor: grab; }
+    #overlay.dragging { cursor: grabbing; }
+    #viewer { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
+    #viewer object { pointer-events: none; display: block; }
+
+    /* ── Empty ──────────────────────────── */
+    #empty {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      color: var(--text-dim); pointer-events: none; z-index: 1; font-size: 15px;
+    }
+    #empty svg { opacity: 0.15; margin-bottom: 8px; }
+    #empty.hidden { display: none; }
+
+    /* ── Toolbar ────────────────────────── */
+    #toolbar {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 2px; z-index: 30;
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 5px 6px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+      user-select: none;
+    }
+    #toolbar button {
+      width: 32px; height: 32px; border: none; background: transparent;
+      color: var(--text-dim); border-radius: 6px; font-size: 15px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.1s;
+    }
+    #toolbar button:hover { background: rgba(255,255,255,0.08); color: #fff; }
+    #toolbar .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+    #level {
+      font-size: 11px; color: var(--text-dim);
+      min-width: 44px; text-align: center;
+      font-variant-numeric: tabular-nums;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    }
+
+    /* ── Loading ────────────────────────── */
+    #loading { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; z-index: 3; pointer-events: none; }
+    #loading.show { display: flex; }
+    #loading .spinner {
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 640px) {
+      #sidebar { width: 220px; min-width: 220px; }
+      #toggle-btn { left: 220px; }
+      #toggle-btn.shifted { left: 0; }
     }
   </style>
 </head>
 <body>
-  <img src="xingce-note/yy.svg" />
+  <div id="app">
+    <nav id="sidebar">
+      <div id="sidebar-header">SVG Viewer <span>— files.js</span></div>
+      <div id="tabs"></div>
+      <div id="sidebar-footer"><span id="file-count">0</span> files</div>
+    </nav>
+
+    <button id="toggle-btn" title="Toggle sidebar (B)">
+      <svg width="10" height="14" viewBox="0 0 10 14" fill="none"><path d="M8 1L2 7l6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <div id="viewer-wrap">
+      <div id="viewer"><object type="image/svg+xml" id="svg-object"></object></div>
+      <div id="overlay"></div>
+      <div id="loading"><div class="spinner"></div></div>
+      <div id="empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+        <span>No SVG selected</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="toolbar">
+    <button id="btn-zoom-out" title="Zoom out (−)">−</button>
+    <span id="level">100%</span>
+    <button id="btn-zoom-in" title="Zoom in (+)">+</button>
+    <span class="sep"></span>
+    <button id="btn-fit" title="Fit to screen (0)">⊡</button>
+    <button id="btn-actual" title="Actual size (1)">1:1</button>
+  </div>
+
+  <script src="files.js"></script>
+  <script>
+    (function() {
+      var sidebar = document.getElementById('sidebar');
+      var toggleBtn = document.getElementById('toggle-btn');
+      var tabs = document.getElementById('tabs');
+      var fileCount = document.getElementById('file-count');
+      var empty = document.getElementById('empty');
+      var loading = document.getElementById('loading');
+      var overlay = document.getElementById('overlay');
+      var viewer = document.getElementById('viewer');
+      var obj = document.getElementById('svg-object');
+      var levelEl = document.getElementById('level');
+      var wrap = document.getElementById('viewer-wrap');
+
+      var files = [];
+      var activeIdx = -1;
+      var scale = 0.15, tx = 0, ty = 0;
+      var vw = 3135, vh = 7272;
+      var dragging = false, sx = 0, sy = 0;
+
+      // ── Load file list from files.js ──
+      function loadFileList() {
+        var names = window.SVG_FILES || ['yy.svg'];
+        names.forEach(function(name) {
+          files.push({ name: name, url: encodeURI(name) });
+        });
+        renderTabs();
+        if (files.length > 0) selectFile(0);
+        else { empty.classList.remove('hidden'); }
+      }
+
+      // ── Tabs ─────────────────────────────
+      function renderTabs() {
+        tabs.innerHTML = '';
+        files.forEach(function(f, i) {
+          var div = document.createElement('div');
+          div.className = 'tab' + (i === activeIdx ? ' active' : '');
+          div.innerHTML = '<span class="dot"></span><span class="name">' + esc(f.name) + '</span>';
+          div.addEventListener('click', function() { selectFile(i); });
+          tabs.appendChild(div);
+        });
+        fileCount.textContent = files.length;
+      }
+
+      function selectFile(i) {
+        if (i < 0 || i >= files.length) return;
+        activeIdx = i;
+        renderTabs();
+
+        vw = 3135; vh = 7272;
+        scale = 0.15; tx = 0; ty = 0;
+        apply();
+
+        loading.classList.add('show');
+        empty.classList.add('hidden');
+
+        obj.data = files[i].url;
+        obj.onload = function() {
+          loading.classList.remove('show');
+          readViewBox();
+          fit();
+        };
+        setTimeout(function() {
+          if (obj.contentDocument && obj.contentDocument.readyState === 'complete') {
+            loading.classList.remove('show');
+            readViewBox();
+            fit();
+          }
+        }, 80);
+      }
+
+      // ── ViewBox ──────────────────────────
+      function readViewBox() {
+        try {
+          var svgDoc = obj.contentDocument;
+          if (!svgDoc) return false;
+          var svg = svgDoc.documentElement;
+          if (!svg || svg.tagName !== 'svg') return false;
+          var vb = svg.getAttribute('viewBox');
+          if (!vb) return false;
+          var parts = vb.split(/\s+/);
+          vw = parseFloat(parts[2]) || vw;
+          vh = parseFloat(parts[3]) || vh;
+          obj.style.width = vw + 'px';
+          obj.style.height = vh + 'px';
+          return true;
+        } catch(e) { return false; }
+      }
+
+      function fit() {
+        scale = Math.min(wrap.clientWidth / vw, wrap.clientHeight / vh) * 0.9;
+        tx = (wrap.clientWidth - vw * scale) / 2;
+        ty = (wrap.clientHeight - vh * scale) / 2;
+        apply();
+      }
+      function apply() {
+        viewer.style.transform = 'translate(' + tx + 'px, ' + ty + 'px) scale(' + scale + ')';
+        levelEl.textContent = Math.round(scale * 100) + '%';
+      }
+      fit();
+
+      // ── Zoom / Pan ───────────────────────
+      overlay.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        if (files.length === 0) return;
+        var rect = wrap.getBoundingClientRect();
+        var mx = e.clientX - rect.left - tx;
+        var my = e.clientY - rect.top - ty;
+        var f = e.deltaY < 0 ? 1.1 : 0.9;
+        scale = Math.max(0.02, Math.min(20, scale * f));
+        tx -= mx * (f - 1);
+        ty -= my * (f - 1);
+        apply();
+      }, { passive: false });
+
+      overlay.addEventListener('pointerdown', function(e) {
+        if (e.button !== 0 || files.length === 0) return;
+        dragging = true;
+        overlay.classList.add('dragging');
+        overlay.setPointerCapture(e.pointerId);
+        sx = e.clientX - tx;
+        sy = e.clientY - ty;
+      });
+      overlay.addEventListener('pointermove', function(e) {
+        if (!dragging) return;
+        tx = e.clientX - sx;
+        ty = e.clientY - sy;
+        apply();
+      });
+      function endDrag() { dragging = false; overlay.classList.remove('dragging'); }
+      overlay.addEventListener('pointerup', endDrag);
+      overlay.addEventListener('pointercancel', endDrag);
+      overlay.addEventListener('pointerleave', endDrag);
+
+      // ── Toolbar ──────────────────────────
+      document.getElementById('btn-zoom-in').addEventListener('click', function() {
+        var cw = wrap.clientWidth, ch = wrap.clientHeight;
+        tx -= (cw / 2 - tx) * 0.1; ty -= (ch / 2 - ty) * 0.1;
+        scale = Math.min(20, scale * 1.2);
+        apply();
+      });
+      document.getElementById('btn-zoom-out').addEventListener('click', function() {
+        var cw = wrap.clientWidth, ch = wrap.clientHeight;
+        tx += (cw / 2 - tx) * (1 - 0.8333); ty += (ch / 2 - ty) * (1 - 0.8333);
+        scale = Math.max(0.02, scale * 0.8333);
+        apply();
+      });
+      document.getElementById('btn-fit').addEventListener('click', function() {
+        if (files.length === 0) return; fit();
+      });
+      document.getElementById('btn-actual').addEventListener('click', function() {
+        if (files.length === 0) return;
+        scale = 1; tx = (wrap.clientWidth - vw) / 2; ty = (wrap.clientHeight - vh) / 2;
+        apply();
+      });
+
+      // ── Sidebar Toggle ───────────────────
+      toggleBtn.addEventListener('click', function() {
+        sidebar.classList.toggle('collapsed');
+        toggleBtn.classList.toggle('shifted');
+      });
+
+      // ── Keyboard ─────────────────────────
+      document.addEventListener('keydown', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        switch (e.key) {
+          case '0': if (files.length) fit(); break;
+          case '1': if (files.length) { scale = 1; tx = (wrap.clientWidth - vw) / 2; ty = (wrap.clientHeight - vh) / 2; apply(); } break;
+          case '=': case '+': document.getElementById('btn-zoom-in').click(); break;
+          case '-': document.getElementById('btn-zoom-out').click(); break;
+          case 'b': sidebar.classList.toggle('collapsed'); toggleBtn.classList.toggle('shifted'); break;
+          case 'ArrowUp': if (activeIdx > 0) selectFile(activeIdx - 1); break;
+          case 'ArrowDown': if (activeIdx < files.length - 1) selectFile(activeIdx + 1); break;
+        }
+      });
+
+      function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+      loadFileList();
+    })();
+  </script>
 </body>
 </html>
