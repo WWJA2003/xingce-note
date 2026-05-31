@@ -1,1 +1,1 @@
-var SVG_FILES = ["yy - 副本.svg", "yy.svg"];
+var SVG_FILES = ["中心理解.svg", "类中心理解.svg", "逻辑填空.svg"];
